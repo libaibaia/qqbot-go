@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/libaibaia/qqbot-go/api"
 	"github.com/libaibaia/qqbot-go/auth"
 	"github.com/libaibaia/qqbot-go/gateway"
+	"github.com/libaibaia/qqbot-go/internal/audio"
 	"github.com/libaibaia/qqbot-go/types"
 )
 
@@ -60,6 +62,108 @@ func (m *Message) ReplyMedia(fileInfo string) error {
 	return m.sendMsg(msg)
 }
 
+// HasAttachments returns true if the message has any attachments.
+func (m *Message) HasAttachments() bool {
+	return len(m.Attachments) > 0
+}
+
+// Images returns all image attachments (content_type starts with "image/").
+func (m *Message) Images() []string {
+	var urls []string
+	for _, a := range m.Attachments {
+		if strings.HasPrefix(a.ContentType, "image/") {
+			urls = append(urls, a.URL)
+		}
+	}
+	return urls
+}
+
+// Voices returns all voice attachments (content_type starts with "audio/").
+// Each entry is the WAV direct link if available, otherwise the original URL.
+func (m *Message) Voices() []string {
+	var urls []string
+	for _, a := range m.Attachments {
+		if strings.HasPrefix(a.ContentType, "audio/") {
+			if a.VoiceWavURL != "" {
+				urls = append(urls, a.VoiceWavURL)
+			} else {
+				urls = append(urls, a.URL)
+			}
+		}
+	}
+	return urls
+}
+
+// VoiceText returns the ASR (speech-to-text) result from QQ's built-in recognition.
+// Returns empty string if no ASR result is available.
+func (m *Message) VoiceText() string {
+	for _, a := range m.Attachments {
+		if a.ASRText != "" {
+			return a.ASRText
+		}
+	}
+	return ""
+}
+
+// UploadAndReplyImage uploads an image and replies with it.
+// url: remote image URL; data: raw image bytes (use one of them).
+func (m *Message) UploadAndReplyImage(url string, data []byte) error {
+	return m.uploadAndReply(api.MediaTypeImage, url, data, "")
+}
+
+// UploadAndReplyVoice uploads a voice file and replies with it.
+// Automatically converts WAV/MP3/OGG/FLAC to SILK format.
+// Requires ffmpeg to be installed for non-SILK input formats.
+func (m *Message) UploadAndReplyVoice(url string, data []byte) error {
+	// If data provided, auto-convert to SILK
+	if len(data) > 0 {
+		silk, err := audio.ToSilk(data)
+		if err != nil {
+			return fmt.Errorf("convert to silk: %w", err)
+		}
+		data = silk
+		url = "" // use converted data
+	}
+	return m.uploadAndReply(api.MediaTypeVoice, url, data, "")
+}
+
+// UploadAndReplyFile uploads a file and replies with it.
+func (m *Message) UploadAndReplyFile(url string, data []byte, filename string) error {
+	return m.uploadAndReply(api.MediaTypeFile, url, data, filename)
+}
+
+func (m *Message) uploadAndReply(fileType api.MediaFileType, url string, data []byte, filename string) error {
+	if m.client == nil {
+		return fmt.Errorf("api client not available")
+	}
+
+	ctx := context.Background()
+
+	// 根据消息类型选择上传 scope
+	scope := "users"
+	target := m.Target
+	switch m.channelType {
+	case "group":
+		scope = "groups"
+	case "channel", "dm":
+		// 频道/频道私信走 guild 上传，目前用 c2c 降级处理
+		// QQ 开放平台对频道媒体上传接口不同，后续可扩展
+		scope = "users"
+	}
+
+	media, err := m.client.UploadMedia(ctx, scope, target, &api.MediaFile{
+		FileType: fileType,
+		URL:      url,
+		Data:     data,
+		FileName: filename,
+	})
+	if err != nil {
+		return fmt.Errorf("upload media: %w", err)
+	}
+
+	return m.ReplyMedia(media.FileInfo)
+}
+
 // StartStream starts a streaming message session (C2C only).
 func (m *Message) StartStream() (*api.StreamSession, error) {
 	if m.Type != "c2c" {
@@ -108,7 +212,7 @@ func New(cfg Config) *Channel {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	return &Channel{cfg: cfg}
+	return &Channel{cfg: cfg, log: cfg.Log}
 }
 
 // Connect starts the channel: authenticates and connects to the gateway.
@@ -126,6 +230,7 @@ func (ch *Channel) Connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("get token: %w", err)
 	}
+	ch.log.Info("token 获取成功，正在连接网关...")
 
 	ch.gw = gateway.New(gateway.Config{
 		Token:   token,

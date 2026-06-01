@@ -14,6 +14,7 @@ import (
 
 	"github.com/libaibaia/qqbot-go/channel"
 	"github.com/libaibaia/qqbot-go/connector"
+	"github.com/libaibaia/qqbot-go/internal/audio"
 )
 
 // Message re-exports channel.Message for convenience.
@@ -27,6 +28,17 @@ type Credentials = connector.Credentials
 
 // CredentialStore re-exports for convenience.
 type CredentialStore = connector.CredentialStore
+
+// ToSilk converts audio data (WAV/MP3/OGG/FLAC) to SILK format for QQ voice messages.
+// Requires ffmpeg to be installed. If the input is already SILK, returns it as-is.
+func ToSilk(data []byte) ([]byte, error) {
+	return audio.ToSilk(data)
+}
+
+// CheckFFmpeg verifies that ffmpeg is available on the system.
+func CheckFFmpeg() (string, error) {
+	return audio.CheckFFmpeg()
+}
 
 // QuickStartConfig configures the QuickStart flow.
 type QuickStartConfig struct {

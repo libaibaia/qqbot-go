@@ -12,6 +12,8 @@ QQ 机器人 Go SDK，基于 [tencent-connect/openclaw-qqbot](https://github.com
 - **消息发送** - 文本、Markdown、媒体消息（图片/视频/语音/文件）
 - **流式消息** - C2C 私聊支持流式输出（打字机效果），适合 AI 对话场景
 - **媒体上传** - 简单上传 + 分片并发上传（大文件）
+- **语音自动转码** - WAV/MP3/OGG/FLAC 自动转换为 SILK 格式（依赖 ffmpeg）
+- **附件解析** - 自动提取图片 URL、语音 URL、语音识别文字
 - **断线重连** - 指数退避重连（最多100次），快速断线检测，限流自动等待
 - **Session 恢复** - 断线后自动 Resume，不丢消息
 - **Token 自动管理** - 提前刷新、singleflight 防并发、后台自动续期
@@ -205,6 +207,85 @@ stream.Send(ctx, "正在思考...", false)  // 中间内容
 stream.Send(ctx, "回答如下：...", true) // 最终内容，done=true
 ```
 
+### 接收媒体附件
+
+```go
+// 检查是否有附件
+if msg.HasAttachments() {
+    // 处理图片
+    for _, url := range msg.Images() {
+        fmt.Println("图片:", url)
+    }
+
+    // 处理语音
+    for _, url := range msg.Voices() {
+        fmt.Println("语音:", url)
+    }
+
+    // QQ 内置语音识别结果
+    if text := msg.VoiceText(); text != "" {
+        fmt.Println("语音识别:", text)
+    }
+}
+```
+
+### 上传并发送媒体
+
+```go
+// 发送图片（从 URL）
+msg.UploadAndReplyImage("https://example.com/image.png", nil)
+
+// 发送图片（从本地文件）
+data, _ := os.ReadFile("photo.jpg")
+msg.UploadAndReplyImage("", data)
+
+// 发送语音（自动转码为 SILK，依赖 ffmpeg）
+audioData, _ := os.ReadFile("recording.mp3")
+msg.UploadAndReplyVoice("", audioData)
+
+// 发送文件
+fileData, _ := os.ReadFile("document.pdf")
+msg.UploadAndReplyFile("", fileData, "report.pdf")
+```
+
+---
+
+## 语音转码
+
+SDK 内置语音自动转码功能，发送语音消息时自动将常见音频格式转换为 QQ 要求的 SILK v3 格式。
+
+### 支持的输入格式
+
+| 格式 | 扩展名 | 说明 |
+|------|--------|------|
+| WAV | .wav | PCM 无压缩音频 |
+| MP3 | .mp3 | MPEG 音频 |
+| OGG | .ogg | Ogg Vorbis |
+| FLAC | .flac | 无损压缩音频 |
+| AAC/M4A | .aac/.m4a | AAC 编码 |
+
+### 前置条件
+
+需要安装 [ffmpeg](https://ffmpeg.org/download.html)，SDK 启动时会自动检测：
+
+```go
+path, err := qqbot.CheckFFmpeg()
+if err != nil {
+    // ffmpeg 未安装，语音转换不可用
+    // 图片和文本消息不受影响
+}
+```
+
+### 手动转码
+
+```go
+// 任意格式 → SILK v3
+silkData, err := qqbot.ToSilk(audioData)
+if err != nil {
+    // 处理错误
+}
+```
+
 ---
 
 ## 低级 API
@@ -386,6 +467,10 @@ qqbot-go/
 │   ├── client.go          # REST API (发消息/交互回复)
 │   ├── media.go           # 媒体上传 (简单上传 + 分片并发上传)
 │   └── stream.go          # 流式消息协议 (C2C 打字机效果)
+├── internal/
+│   ├── httputil/client.go # 共享 HTTP 客户端
+│   ├── qrterm/qrterm.go  # 终端二维码渲染
+│   └── audio/convert.go   # 语音转码 (SILK v3 编码器)
 ├── types/
 │   ├── const.go           # 常量 (Intents/媒体类型/消息类型)
 │   ├── events.go          # 事件结构体定义
@@ -417,6 +502,7 @@ SDK 不会吞掉任何错误，所有错误均返回给调用方，包括：
 | 依赖 | 用途 |
 |------|------|
 | `github.com/gorilla/websocket` | WebSocket 客户端 |
+| `ffmpeg` (系统依赖) | 语音格式转换（发送语音消息时需要） |
 
 ---
 

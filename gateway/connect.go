@@ -136,6 +136,7 @@ func (g *Gateway) connectOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("dial websocket: %w", err)
 	}
+	g.log.Info("WebSocket 已连接，等待 Hello...")
 
 	ws := &wsConn{conn: conn}
 	g.mu.Lock()

@@ -140,7 +140,7 @@ func (tm *TokenManager) fetchToken(ctx context.Context) (string, error) {
 
 	var resp struct {
 		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
+		ExpiresIn   any    `json:"expires_in"` // 可能是 int 或 string
 	}
 
 	err := httputil.DoJSON(ctx, tm.client, "POST", httputil.TokenEndpoint, nil, reqBody, &resp)
@@ -152,9 +152,12 @@ func (tm *TokenManager) fetchToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("fetch access token: empty token in response")
 	}
 
-	expiresIn := resp.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 7200
+	expiresIn := 7200
+	switch v := resp.ExpiresIn.(type) {
+	case float64:
+		expiresIn = int(v)
+	case string:
+		fmt.Sscanf(v, "%d", &expiresIn)
 	}
 
 	tm.mu.Lock()
